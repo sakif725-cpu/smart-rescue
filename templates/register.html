@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register | RescueTracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <main class="mx-auto max-w-md px-4 py-10">
+        <a href="/" class="text-sm font-medium text-sky-700 hover:text-sky-800">← Back to Home</a>
+        <section class="mt-4 rounded-2xl bg-white p-6 shadow-sm sm:p-8">
+            <h1 class="text-2xl font-bold">Create Account</h1>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="mt-4 space-y-2">
+                        {% for category, message in messages %}
+                            <p class="rounded-lg px-3 py-2 text-sm {% if category == 'error' %}bg-red-50 text-red-700{% else %}bg-green-50 text-green-700{% endif %}">{{ message }}</p>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <form method="post" class="mt-5 space-y-4">
+                <div>
+                    <label class="mb-1 block text-sm font-semibold text-slate-700">Full Name</label>
+                    <input name="name" type="text" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-semibold text-slate-700">Email</label>
+                    <input name="email" type="email" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-semibold text-slate-700">Role</label>
+                    <select name="role" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                        {% for role in roles %}
+                            <option value="{{ role }}">{{ role|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-semibold text-slate-700">Password</label>
+                    <input name="password" type="password" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                </div>
+                <button type="submit" class="w-full rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800">Register</button>
+            </form>
+
+            <p class="mt-4 text-sm text-slate-600">
+                Already have an account?
+                <a href="/login" class="font-semibold text-sky-700 hover:text-sky-800">Login here</a>
+            </p>
+        </section>
+    </main>
+</body>
+</html>

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard | RescueTracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <main class="mx-auto max-w-4xl px-4 py-10">
+        <a href="/" class="text-sm font-medium text-sky-700 hover:text-sky-800">← Back to Home</a>
+
+        <section class="mt-4 rounded-2xl bg-white p-6 shadow-sm sm:p-8">
+            <h1 class="text-2xl font-bold">Rescue Dashboard</h1>
+            <p class="mt-2 text-sm text-slate-600">Live overview of rescue operations.</p>
+
+            <div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <article class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Animals Rescued</p>
+                    <p id="animalsRescuedValue" class="mt-2 text-2xl font-bold text-slate-900">0</p>
+                </article>
+                <article class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Active Volunteers</p>
+                    <p id="activeVolunteersValue" class="mt-2 text-2xl font-bold text-slate-900">0</p>
+                </article>
+                <article class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Partner NGOs</p>
+                    <p id="partnerNgosValue" class="mt-2 text-2xl font-bold text-slate-900">0</p>
+                </article>
+            </div>
+
+            <div class="mt-6 rounded-xl border border-slate-200 p-4">
+                <canvas id="statsPieChart" class="max-h-80"></canvas>
+            </div>
+
+            <div class="mt-6 flex flex-wrap gap-3">
+                {% if current_user.role == 'volunteer' %}
+                    <a href="/volunteer" class="rounded-lg bg-sky-700 px-5 py-2 text-sm font-semibold text-white hover:bg-sky-800">Revive</a>
+                {% elif current_user.role == 'ngo' %}
+                    <a href="/ngo" class="rounded-lg bg-sky-700 px-5 py-2 text-sm font-semibold text-white hover:bg-sky-800">Open NGO Panel</a>
+                {% elif current_user.role == 'admin' %}
+                    <a href="/admin" class="rounded-lg bg-sky-700 px-5 py-2 text-sm font-semibold text-white hover:bg-sky-800">Open Admin Panel</a>
+                {% else %}
+                    <a href="/report" class="rounded-lg bg-sky-700 px-5 py-2 text-sm font-semibold text-white hover:bg-sky-800">Report a Case</a>
+                {% endif %}
+                <a href="/logout" class="rounded-lg border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Logout</a>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const chartContext = document.getElementById("statsPieChart").getContext("2d");
+        const chart = new Chart(chartContext, {
+            type: "pie",
+            data: {
+                labels: ["Animals Rescued", "Active Volunteers", "Partner NGOs"],
+                datasets: [{
+                    data: [0, 0, 0],
+                    backgroundColor: ["#0ea5e9", "#22c55e", "#f59e0b"],
+                    borderColor: "#ffffff",
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: "bottom"
+                    }
+                }
+            }
+        });
+
+        const animalsRescuedValue = document.getElementById("animalsRescuedValue");
+        const activeVolunteersValue = document.getElementById("activeVolunteersValue");
+        const partnerNgosValue = document.getElementById("partnerNgosValue");
+
+        function updateStats() {
+            fetch("/api/stats")
+                .then(async (response) => {
+                    const data = await response.json();
+                    if (!response.ok || !data.success) {
+                        throw new Error("Failed to load stats");
+                    }
+
+                    const stats = data.stats || {};
+                    const animalsRescued = Number(stats.animalsRescued || 0);
+                    const activeVolunteers = Number(stats.activeVolunteers || 0);
+                    const partnerNgos = Number(stats.partnerNgos || 0);
+
+                    animalsRescuedValue.textContent = animalsRescued.toLocaleString();
+                    activeVolunteersValue.textContent = activeVolunteers.toLocaleString();
+                    partnerNgosValue.textContent = partnerNgos.toLocaleString();
+
+                    chart.data.datasets[0].data = [animalsRescued, activeVolunteers, partnerNgos];
+                    chart.update();
+                })
+                .catch(() => {
+                });
+        }
+
+        updateStats();
+        setInterval(updateStats, 10000);
+    </script>
+</body>
+</html>

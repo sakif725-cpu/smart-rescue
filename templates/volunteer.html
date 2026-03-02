@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Volunteer Dashboard | RescueTracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useEffect, useRef, useState } = React;
+
+        function LiveRescueMap() {
+            const mapRef = useRef(null);
+            const markerLayerRef = useRef(null);
+            const userMarkerRef = useRef(null);
+            const userAccuracyRef = useRef(null);
+            const watchIdRef = useRef(null);
+            const routeLayerRef = useRef(null);
+            const [cases, setCases] = useState([]);
+            const [isTracking, setIsTracking] = useState(false);
+            const [locationError, setLocationError] = useState("");
+            const [userCoords, setUserCoords] = useState(null);
+            const [searchTerm, setSearchTerm] = useState("");
+            const [searchRadiusKm, setSearchRadiusKm] = useState("3");
+            const [nearbyResults, setNearbyResults] = useState([]);
+            const [nearbyCaseIds, setNearbyCaseIds] = useState([]);
+            const [searchMessage, setSearchMessage] = useState("");
+            const [routeMessage, setRouteMessage] = useState("");
+            const [fetchMessage, setFetchMessage] = useState("");
+            const [isRouting, setIsRouting] = useState(false);
+
+            const statusColor = {
+                Emergency: "#ef4444",
+                "In Progress": "#facc15",
+                Pending: "#f59e0b",
+                Done: "#22c55e"
+            };
+
+            const createColorMarker = (color, isHighlighted = false) => {
+                return L.divIcon({
+                    className: "",
+                    html: `<span style="display:inline-block;width:${isHighlighted ? 18 : 14}px;height:${isHighlighted ? 18 : 14}px;border-radius:9999px;background:${color};border:2px solid white;box-shadow:0 0 0 ${isHighlighted ? 3 : 1}px ${isHighlighted ? 'rgba(59,130,246,0.45)' : 'rgba(15,23,42,0.2)'};"></span>`,
+                    iconSize: [isHighlighted ? 18 : 14, isHighlighted ? 18 : 14],
+                    iconAnchor: [isHighlighted ? 9 : 7, isHighlighted ? 9 : 7]
+                });
+            };
+
+            const calculateDistanceKm = (lat1, lng1, lat2, lng2) => {
+                const toRadians = (value) => value * (Math.PI / 180);
+                const earthRadiusKm = 6371;
+                const dLat = toRadians(lat2 - lat1);
+                const dLng = toRadians(lng2 - lng1);
+                const a =
+                    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                return earthRadiusKm * c;
+            };
+
+            const formatDistance = (distanceKm) => {
+                const distanceMeters = distanceKm * 1000;
+                const kmText = `${distanceKm.toFixed(2)} km`;
+                const meterText = distanceMeters < 1000
+                    ? `${Math.round(distanceMeters)} m`
+                    : `${distanceMeters.toFixed(0)} m`;
+                return `${kmText} (${meterText})`;
+            };
+
+            const formatDuration = (seconds) => {
+                const minutes = Math.round(seconds / 60);
+                if (minutes < 60) return `${minutes} min`;
+                const hours = Math.floor(minutes / 60);
+                const remainingMinutes = minutes % 60;
+                return `${hours}h ${remainingMinutes}m`;
+            };
+
+            const fetchRoadRoute = async (startPoint, endPoint) => {
+                const routeUrl = `https://router.project-osrm.org/route/v1/driving/${startPoint.lng},${startPoint.lat};${endPoint.lng},${endPoint.lat}?overview=full&geometries=geojson`;
+                const response = await fetch(routeUrl);
+                const data = await response.json();
+
+                if (!response.ok || !data.routes || !data.routes.length) {
+                    throw new Error("Road route unavailable");
+                }
+
+                return data.routes[0];
+            };
+
+            useEffect(() => {
+                mapRef.current = L.map("live-rescue-map").setView([12.9716, 77.5946], 13);
+                L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                    maxZoom: 19,
+                    attribution: '&copy; OpenStreetMap contributors'
+                }).addTo(mapRef.current);
+                markerLayerRef.current = L.layerGroup().addTo(mapRef.current);
+
+                const invalidateMapSize = () => mapRef.current && mapRef.current.invalidateSize();
+                setTimeout(invalidateMapSize, 0);
+                window.addEventListener("resize", invalidateMapSize);
+
+                return () => {
+                    window.removeEventListener("resize", invalidateMapSize);
+                    if (routeLayerRef.current) {
+                        routeLayerRef.current.remove();
+                        routeLayerRef.current = null;
+                    }
+                    if (mapRef.current) {
+                        mapRef.current.remove();
+                        mapRef.current = null;
+                    }
+                };
+            }, []);
+
+            useEffect(() => {
+                if (!markerLayerRef.current) return;
+
+                const layer = markerLayerRef.current;
+                layer.clearLayers();
+
+                cases.forEach((rescueCase) => {
+                    const isHighlighted = nearbyCaseIds.includes(rescueCase.id);
+                    const marker = L.marker(
+                        [rescueCase.lat, rescueCase.lng],
+                        { icon: createColorMarker(statusColor[rescueCase.status] || "#64748b", isHighlighted) }
+                    );
+                    const previewImage = rescueCase.imagePath
+                        ? `<img src="${rescueCase.imagePath}" alt="Reported animal" style="margin-top:8px;width:160px;height:110px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0;"/>`
+                        : "";
+                    marker.bindPopup(`<strong>${rescueCase.label}</strong><br/>Status: ${rescueCase.status}<br/>Reporter: ${rescueCase.reporterLat.toFixed(4)}, ${rescueCase.reporterLng.toFixed(4)}${previewImage}`);
+                    marker.addTo(layer);
+                });
+            }, [cases, nearbyCaseIds]);
+
+            useEffect(() => {
+                const fetchActiveReports = () => {
+                    fetch("/api/reports/active")
+                        .then(async (response) => {
+                            const data = await response.json();
+                            if (!response.ok || !data.success) {
+                                throw new Error(data.message || "Failed to load active reports.");
+                            }
+                            setCases(data.reports || []);
+                            setFetchMessage(data.reports?.length ? "Live reports updated." : "No active injury reports yet.");
+                        })
+                        .catch((error) => {
+                            setFetchMessage(error.message || "Unable to fetch active reports.");
+                        });
+                };
+
+                fetchActiveReports();
+                const timer = setInterval(fetchActiveReports, 10000);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                return () => {
+                    if (watchIdRef.current !== null && navigator.geolocation) {
+                        navigator.geolocation.clearWatch(watchIdRef.current);
+                    }
+                };
+            }, []);
+
+            const trackMyLocation = () => {
+                if (!navigator.geolocation) {
+                    setLocationError("Geolocation is not supported by this browser.");
+                    return;
+                }
+
+                setLocationError("");
+                setIsTracking(true);
+
+                if (watchIdRef.current !== null) {
+                    navigator.geolocation.clearWatch(watchIdRef.current);
+                }
+
+                watchIdRef.current = navigator.geolocation.watchPosition(
+                    (position) => {
+                        const { latitude, longitude, accuracy } = position.coords;
+                        const currentPoint = [latitude, longitude];
+                        setUserCoords({ lat: latitude, lng: longitude });
+
+                        if (!mapRef.current) return;
+
+                        mapRef.current.setView(currentPoint, 15);
+
+                        if (!userMarkerRef.current) {
+                            userMarkerRef.current = L.marker(currentPoint).addTo(mapRef.current);
+                            userMarkerRef.current.bindPopup("Your current location");
+                        } else {
+                            userMarkerRef.current.setLatLng(currentPoint);
+                        }
+
+                        if (!userAccuracyRef.current) {
+                            userAccuracyRef.current = L.circle(currentPoint, {
+                                radius: accuracy,
+                                color: "#2563eb",
+                                fillColor: "#60a5fa",
+                                fillOpacity: 0.15,
+                                weight: 1
+                            }).addTo(mapRef.current);
+                        } else {
+                            userAccuracyRef.current.setLatLng(currentPoint);
+                            userAccuracyRef.current.setRadius(accuracy);
+                        }
+                    },
+                    () => {
+                        setLocationError("Unable to track your location. Please allow location access.");
+                        setIsTracking(false);
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 5000
+                    }
+                );
+            };
+
+            const searchNearbyInjuredAnimals = () => {
+                if (!userCoords) {
+                    setSearchMessage("Track your location first to search nearby injured animals.");
+                    setNearbyResults([]);
+                    setNearbyCaseIds([]);
+                    return;
+                }
+
+                const radius = Number(searchRadiusKm);
+                const normalizedTerm = searchTerm.trim().toLowerCase();
+
+                const matches = cases
+                    .filter((rescueCase) => rescueCase.status !== "Done")
+                    .map((rescueCase) => {
+                        const distanceKm = calculateDistanceKm(
+                            userCoords.lat,
+                            userCoords.lng,
+                            rescueCase.reporterLat,
+                            rescueCase.reporterLng
+                        );
+                        return { ...rescueCase, distanceKm };
+                    })
+                    .filter((rescueCase) => rescueCase.distanceKm <= radius)
+                    .filter((rescueCase) =>
+                        !normalizedTerm || rescueCase.label.toLowerCase().includes(normalizedTerm)
+                    )
+                    .sort((a, b) => a.distanceKm - b.distanceKm);
+
+                setNearbyResults(matches);
+                setNearbyCaseIds(matches.map((item) => item.id));
+
+                if (!matches.length) {
+                    setSearchMessage("No injured animals found nearby for the selected filters.");
+                    return;
+                }
+
+                setSearchMessage(`Found ${matches.length} nearby injured animal case(s).`);
+
+                if (mapRef.current) {
+                    const boundsPoints = matches.map((item) => [item.reporterLat, item.reporterLng]);
+                    boundsPoints.push([userCoords.lat, userCoords.lng]);
+                    mapRef.current.fitBounds(boundsPoints, { padding: [40, 40] });
+                }
+            };
+
+            const drawRouteToCase = async (targetCase) => {
+                if (!mapRef.current || !userCoords || !targetCase) return;
+
+                const startPoint = { lat: userCoords.lat, lng: userCoords.lng };
+                const endPoint = { lat: targetCase.reporterLat, lng: targetCase.reporterLng };
+
+                try {
+                    const roadRoute = await fetchRoadRoute(startPoint, endPoint);
+                    const routeLatLngs = roadRoute.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+
+                    if (routeLayerRef.current) {
+                        routeLayerRef.current.remove();
+                    }
+
+                    routeLayerRef.current = L.polyline(routeLatLngs, {
+                        color: "#2563eb",
+                        weight: 5
+                    }).addTo(mapRef.current);
+
+                    mapRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [40, 40] });
+                    const routeDistanceKm = roadRoute.distance / 1000;
+                    setRouteMessage(
+                        `Road route to ${targetCase.label}: ${formatDistance(routeDistanceKm)} • ETA ${formatDuration(roadRoute.duration)}.`
+                    );
+                } catch {
+                    if (routeLayerRef.current) {
+                        routeLayerRef.current.remove();
+                    }
+
+                    routeLayerRef.current = L.polyline(
+                        [
+                            [startPoint.lat, startPoint.lng],
+                            [endPoint.lat, endPoint.lng]
+                        ],
+                        {
+                            color: "#2563eb",
+                            weight: 4,
+                            dashArray: "7 7"
+                        }
+                    ).addTo(mapRef.current);
+
+                    mapRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [40, 40] });
+                    setRouteMessage(`Road route unavailable. Showing direct path to ${targetCase.label} (${formatDistance(targetCase.distanceKm)}).`);
+                }
+            };
+
+            const createRouteToNearest = async () => {
+                if (!userCoords) {
+                    setRouteMessage("Track your location first to create a route.");
+                    return;
+                }
+
+                const candidates = nearbyResults.length
+                    ? nearbyResults
+                    : cases
+                        .filter((rescueCase) => rescueCase.status !== "Done")
+                        .map((rescueCase) => ({
+                            ...rescueCase,
+                            distanceKm: calculateDistanceKm(
+                                userCoords.lat,
+                                userCoords.lng,
+                                rescueCase.reporterLat,
+                                rescueCase.reporterLng
+                            )
+                        }))
+                        .sort((a, b) => a.distanceKm - b.distanceKm);
+
+                const nearest = candidates[0];
+
+                if (!nearest) {
+                    setRouteMessage("No nearby injured animal available for routing.");
+                    return;
+                }
+
+                setIsRouting(true);
+                await drawRouteToCase(nearest);
+                setIsRouting(false);
+            };
+
+            return (
+                <section className="rounded-2xl bg-white p-4 shadow-sm sm:p-6">
+                    <h2 className="text-xl font-bold text-slate-900 sm:text-2xl">🗺 Live Rescue Map</h2>
+                    <p className="mt-2 text-sm text-slate-600">Live locations of reported injured animals and rescue progress.</p>
+                    {fetchMessage && <p className="mt-2 text-xs text-slate-500">{fetchMessage}</p>}
+
+                    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <button
+                            type="button"
+                            onClick={trackMyLocation}
+                            className="inline-flex items-center justify-center rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800"
+                        >
+                            📍 Track My Location
+                        </button>
+                        <span className="text-xs text-slate-500">
+                            {isTracking ? "Live location tracking is active." : "Press to center map on your current position."}
+                        </span>
+                    </div>
+                    {locationError && <p className="mt-2 text-xs text-red-600">{locationError}</p>}
+
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+                        <p className="text-sm font-semibold text-slate-800">🔎 Search Nearby Injured Animals</p>
+                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-4">
+                            <input
+                                type="text"
+                                value={searchTerm}
+                                onChange={(event) => setSearchTerm(event.target.value)}
+                                placeholder="Search animal (e.g., dog)"
+                                className="sm:col-span-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            />
+                            <select
+                                value={searchRadiusKm}
+                                onChange={(event) => setSearchRadiusKm(event.target.value)}
+                                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            >
+                                <option value="1">Within 1 km</option>
+                                <option value="3">Within 3 km</option>
+                                <option value="5">Within 5 km</option>
+                                <option value="10">Within 10 km</option>
+                            </select>
+                            <button
+                                type="button"
+                                onClick={searchNearbyInjuredAnimals}
+                                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                            >
+                                Search
+                            </button>
+                        </div>
+                        <div className="mt-2">
+                            <button
+                                type="button"
+                                onClick={createRouteToNearest}
+                                disabled={isRouting}
+                                className="w-full rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                            >
+                                {isRouting ? "Finding Best Route..." : "Create Route to Nearest"}
+                            </button>
+                        </div>
+                        {searchMessage && <p className="mt-2 text-xs text-slate-600">{searchMessage}</p>}
+                        {routeMessage && <p className="mt-1 text-xs text-sky-700">{routeMessage}</p>}
+                        {!!nearbyResults.length && (
+                            <ul className="mt-3 space-y-1 text-xs text-slate-700">
+                                {nearbyResults.map((item) => (
+                                    <li key={item.id} className="rounded-lg border border-slate-200 bg-white p-2">
+                                        <p>• {item.label} ({item.status}) — {formatDistance(item.distanceKm)} away</p>
+                                        {item.imagePath && (
+                                            <img
+                                                src={item.imagePath}
+                                                alt="Reported animal"
+                                                className="mt-2 h-20 w-28 rounded-md border border-slate-200 object-cover"
+                                            />
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+
+                    <div id="live-rescue-map" className="mt-4 h-80 w-full rounded-xl border border-slate-200 sm:h-96"></div>
+
+                    <div className="mt-4 flex flex-wrap gap-4 text-sm font-medium text-slate-700">
+                        <span className="inline-flex items-center gap-2">
+                            <span className="h-3 w-3 rounded-full bg-red-500"></span> 🔴 Emergency
+                        </span>
+                        <span className="inline-flex items-center gap-2">
+                            <span className="h-3 w-3 rounded-full bg-yellow-400"></span> 🟡 In Progress
+                        </span>
+                        <span className="inline-flex items-center gap-2">
+                            <span className="h-3 w-3 rounded-full bg-amber-500"></span> 🟠 Pending
+                        </span>
+                        <span className="inline-flex items-center gap-2">
+                            <span className="h-3 w-3 rounded-full bg-green-500"></span> 🟢 Done
+                        </span>
+                    </div>
+                </section>
+            );
+        }
+
+        function VolunteerApp() {
+            return (
+                <div className="min-h-screen px-4 py-8 sm:px-6 lg:px-8">
+                    <main className="mx-auto w-full max-w-6xl">
+                        <a href="/" className="text-sm font-medium text-sky-700 hover:text-sky-800">← Back to Home</a>
+                        <div className="mt-4 space-y-6">
+                            <header className="rounded-2xl bg-white p-6 shadow-sm sm:p-8">
+                                <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Volunteer Operations</h1>
+                                <p className="mt-2 text-sm text-slate-600">Monitor rescue status and respond quickly to nearby emergency cases.</p>
+                            </header>
+                            <LiveRescueMap />
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById("root")).render(<VolunteerApp />);
+    </script>
+</body>
+</html>

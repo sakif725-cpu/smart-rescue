@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access Denied | RescueTracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <main class="mx-auto max-w-lg px-4 py-12">
+        <section class="rounded-2xl bg-white p-6 shadow-sm sm:p-8">
+            <h1 class="text-2xl font-bold text-red-600">Access Denied</h1>
+            <p class="mt-3 text-sm text-slate-700">Your account role is <span class="font-semibold">{{ current_role }}</span>.</p>
+            <p class="mt-1 text-sm text-slate-700">This page is available for: <span class="font-semibold">{{ allowed_roles|join(', ') }}</span>.</p>
+            <div class="mt-6 flex flex-col gap-2 sm:flex-row">
+                <a href="/dashboard" class="inline-flex items-center justify-center rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800">Go to My Dashboard</a>
+                <a href="/logout" class="inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Switch Account</a>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

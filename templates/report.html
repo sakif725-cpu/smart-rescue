@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emergency Animal Report | RescueTracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useMemo, useRef, useState } = React;
+
+        function EmergencyAnimalReportForm() {
+            const [imageFile, setImageFile] = useState(null);
+            const [imagePreview, setImagePreview] = useState("");
+            const [coordinates, setCoordinates] = useState("");
+            const [animalType, setAnimalType] = useState("");
+            const [contactNumber, setContactNumber] = useState("");
+            const [urgency, setUrgency] = useState("Low");
+            const [isLocating, setIsLocating] = useState(false);
+            const [isSubmitting, setIsSubmitting] = useState(false);
+            const [submitMessage, setSubmitMessage] = useState("");
+            const [submitError, setSubmitError] = useState("");
+            const [locationError, setLocationError] = useState("");
+            const fileInputRef = useRef(null);
+
+            const borderColorClass = useMemo(() => {
+                if (urgency === "Medium") return "border-yellow-400";
+                if (urgency === "High") return "border-red-500";
+                return "border-green-500";
+            }, [urgency]);
+
+            const handleImageSelection = (file) => {
+                if (!file) return;
+                if (!file.type.startsWith("image/")) return;
+                setImageFile(file);
+                setImagePreview(URL.createObjectURL(file));
+            };
+
+            const onFileInputChange = (event) => {
+                const file = event.target.files?.[0];
+                handleImageSelection(file);
+            };
+
+            const onDrop = (event) => {
+                event.preventDefault();
+                const file = event.dataTransfer?.files?.[0];
+                handleImageSelection(file);
+            };
+
+            const onDragOver = (event) => {
+                event.preventDefault();
+            };
+
+            const detectLocation = () => {
+                if (!navigator.geolocation) {
+                    setLocationError("Geolocation is not supported by this browser.");
+                    return;
+                }
+
+                setIsLocating(true);
+                setLocationError("");
+
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const latitude = position.coords.latitude.toFixed(6);
+                        const longitude = position.coords.longitude.toFixed(6);
+                        setCoordinates(`${latitude}, ${longitude}`);
+                        setIsLocating(false);
+                    },
+                    () => {
+                        setLocationError("Unable to detect location. Please allow location access.");
+                        setIsLocating(false);
+                    }
+                );
+            };
+
+            const submitReport = (event) => {
+                event.preventDefault();
+                if (!imageFile) return;
+
+                if (!coordinates) {
+                    setSubmitError("Please detect location before submitting.");
+                    return;
+                }
+
+                setIsSubmitting(true);
+                setSubmitMessage("");
+                setSubmitError("");
+
+                const payload = new FormData();
+                payload.append("image", imageFile);
+                payload.append("coordinates", coordinates);
+                payload.append("animalType", animalType || "Animal");
+                payload.append("contactNumber", contactNumber);
+                payload.append("urgency", urgency);
+
+                fetch("/api/reports", {
+                    method: "POST",
+                    body: payload
+                })
+                    .then(async (response) => {
+                        const data = await response.json();
+                        if (!response.ok || !data.success) {
+                            throw new Error(data.message || "Failed to submit report.");
+                        }
+
+                        setSubmitMessage(data.message || "Emergency report submitted successfully.");
+                        setImageFile(null);
+                        setImagePreview("");
+                        setCoordinates("");
+                        setAnimalType("");
+                        setContactNumber("");
+                        setUrgency("Low");
+                        if (fileInputRef.current) {
+                            fileInputRef.current.value = "";
+                        }
+                    })
+                    .catch((error) => {
+                        setSubmitError(error.message || "Failed to submit report.");
+                    })
+                    .finally(() => {
+                        setIsSubmitting(false);
+                    });
+            };
+
+            return (
+                <div className="min-h-screen px-4 py-8 sm:px-6 lg:px-8">
+                    <main className="mx-auto w-full max-w-2xl">
+                        <a href="/" className="text-sm font-medium text-sky-700 hover:text-sky-800">← Back to Home</a>
+
+                        <section className={`mt-4 rounded-2xl border-2 ${borderColorClass} bg-white p-6 shadow-sm sm:p-8`}>
+                            <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Emergency Animal Report</h1>
+                            <p className="mt-2 text-sm text-slate-600">Provide key details so responders can act quickly.</p>
+
+                            {submitMessage && (
+                                <p className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{submitMessage}</p>
+                            )}
+                            {submitError && (
+                                <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{submitError}</p>
+                            )}
+
+                            <form className="mt-6 space-y-5" onSubmit={submitReport}>
+                                <div>
+                                    <label className="mb-2 block text-sm font-semibold text-slate-700">📸 Upload Image</label>
+                                    <div
+                                        onClick={() => fileInputRef.current?.click()}
+                                        onDrop={onDrop}
+                                        onDragOver={onDragOver}
+                                        className="cursor-pointer rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-5 text-center hover:bg-slate-100"
+                                    >
+                                        <input
+                                            ref={fileInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={onFileInputChange}
+                                        />
+                                        {!imagePreview ? (
+                                            <p className="text-sm text-slate-600">Drag & drop an image here, or click to browse.</p>
+                                        ) : (
+                                            <div className="flex flex-col items-center gap-3">
+                                                <img src={imagePreview} alt="Uploaded preview" className="h-36 w-36 rounded-lg object-cover" />
+                                                <p className="text-xs text-slate-500">{imageFile?.name}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="mb-2 block text-sm font-semibold text-slate-700">📍 Auto Detect Location</label>
+                                    <div className="flex flex-col gap-3 sm:flex-row">
+                                        <button
+                                            type="button"
+                                            onClick={detectLocation}
+                                            className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-70"
+                                            disabled={isLocating}
+                                        >
+                                            {isLocating ? "Detecting..." : "Detect Location"}
+                                        </button>
+                                        <input
+                                            type="text"
+                                            value={coordinates}
+                                            readOnly
+                                            placeholder="Latitude, Longitude"
+                                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+                                        />
+                                    </div>
+                                    {locationError && <p className="mt-2 text-xs text-red-600">{locationError}</p>}
+                                </div>
+
+                                <div>
+                                    <label htmlFor="animalType" className="mb-2 block text-sm font-semibold text-slate-700">🐶 Animal Type</label>
+                                    <select
+                                        id="animalType"
+                                        value={animalType}
+                                        onChange={(event) => setAnimalType(event.target.value)}
+                                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                                    >
+                                        <option value="">Select animal type</option>
+                                        <option value="Dog">Dog</option>
+                                        <option value="Cat">Cat</option>
+                                        <option value="Bird">Bird</option>
+                                        <option value="Cow">Cow</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="mb-2 block text-sm font-semibold text-slate-700">⚠ Urgency Level</label>
+                                    <div className="flex flex-wrap gap-4">
+                                        {["Low", "Medium", "High"].map((level) => (
+                                            <label key={level} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                                                <input
+                                                    type="radio"
+                                                    name="urgency"
+                                                    value={level}
+                                                    checked={urgency === level}
+                                                    onChange={(event) => setUrgency(event.target.value)}
+                                                    className="h-4 w-4"
+                                                />
+                                                {level}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label htmlFor="contactNumber" className="mb-2 block text-sm font-semibold text-slate-700">📞 Contact Number</label>
+                                    <input
+                                        id="contactNumber"
+                                        type="tel"
+                                        value={contactNumber}
+                                        onChange={(event) => setContactNumber(event.target.value)}
+                                        placeholder="Enter your contact number"
+                                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+                                    />
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={!imageFile || isSubmitting}
+                                    className="w-full rounded-lg bg-sky-700 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                >
+                                    {isSubmitting ? "Submitting..." : "Submit Emergency Report"}
+                                </button>
+                            </form>
+                        </section>
+                    </main>
+                </div>
+            );
+        }
+
+        function App() {
+            return <EmergencyAnimalReportForm />;
+        }
+
+        ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+</body>
+</html>
